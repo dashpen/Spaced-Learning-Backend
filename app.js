@@ -3,6 +3,7 @@ import 'dotenv/config'
 import auth from './assets/js/auth.js'
 import session from 'express-session'
 import * as query from './assets/js/query.js'
+import cors from 'cors'
 
 const app = express()
 const port = 3000
@@ -21,12 +22,31 @@ const limiter = rateLimit({
 // Apply the rate limiting middleware to all requests.
 app.use(limiter)
 
+
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: true,
+  // httpOnly: false, // Helps prevent XSS attacks
+  cookie: {
+    secure: false, // Set to true if using HTTPS
+    maxAge: 1000 * 60 * 60 // 1 hour
+  }
+}))
+
+function isAuthenticated(req, res, next) {
+  if (req.session.user) {
+    return next()
+  }
+  res.status(401).send('Unauthorized')
+}
+
+app.use(cors())
+
 app.get('/', async (req, res) => {
   try {
-    const result = query.getAllUsers()
-    result.then(data => {
-      res.status(200).json(data)
-    })
+    const result = await query.getAllUsers()
+    res.status(200).json(result)
   }
   catch (err) {
     console.error(err)
@@ -38,6 +58,7 @@ app.post('/signup', async (req, res) => {
   if(req.headers['content-type'] !== 'application/json') {
     return res.status(400).send('Content-Type must be application/json')
   }
+
   try {
     let { username, password, email } = req.body
     const validatedInput = auth.user_schema.validate({username: username, password: password, email: email})
@@ -48,20 +69,13 @@ app.post('/signup', async (req, res) => {
 
     if (!password) return res.status(500).send('Error hashing password')
 
-    console.log(`Creating user with username: ${username}, email: ${email}`)
+    const existingUser = await query.getUserByUsername(username)
 
-    const existingUser = query.getUserByUsername(username)
+    if (existingUser) return res.status(409).send('Username already exists')
 
-    if (existingUser) {
-      return res.status(409).send('Username already exists')
-    }
+    const result = await query.addUser(username, password, email)
 
-    const result = query.addUser(username, password, email)
-
-    result.then(data => {
-      if (!data) return res.status(500).send('Error creating user')
-      res.status(201).json(data)
-    })
+    res.status(201).json(result)
 
   }
   catch (err) {
@@ -71,27 +85,31 @@ app.post('/signup', async (req, res) => {
 })
 
 
-app.get('/login', async (req, res) => {
+app.post('/login', async (req, res) => {
   if(req.headers['content-type'] !== 'application/json') {
     return res.status(400).send('Content-Type must be application/json')
   }
-  if (!req.body) {
-    return res.status(400).send('Request body is required')
-  }
   try {
     const { username, password } = req.body
-    if (!username || !password) {
-      return res.status(400).send('Missing required fields')
+    const validatedInput = auth.user_login_schema.validate({username: username, password: password})
+
+    if (validatedInput.error) return res.status(400).send(validatedInput.error.message)
+
+    const user = await query.getUserByUsername(username)
+
+    if (!user) return res.status(404).send('User not found')
+    
+    const isValidPassword = await auth.verifyPassword(password, user.password)
+
+    if (!isValidPassword) return res.status(401).send('Invalid password')
+
+    req.session.user = {
+      id: user.id,
+      username: user.username,
     }
-    const user = await pool.query('SELECT * FROM user_data WHERE username = $1', [username])
-    if (user.rows.length === 0) {
-      return res.status(404).send('User not found')
-    }
-    const isValidPassword = await auth.verifyPassword(password, user.rows[0].password)
-    if (!isValidPassword) {
-      return res.status(401).send('Invalid password')
-    }
-    res.json({ message: 'Login successful' })
+    req.session.save()
+
+    res.status(200).json({ message: 'Login successful' })
   }
   catch (err) {
     console.error(err)
@@ -99,6 +117,28 @@ app.get('/login', async (req, res) => {
   }
 }
 )
+
+app.get('/logout', (req, res) => {
+  req.session.destroy(err => {
+    if (err) {
+      console.error(err)
+      return res.status(500).send('Internal Server Error')
+    }
+    res.status(200).send('Logged out successfully')
+  })
+})
+
+app.get('/user/problems', isAuthenticated, async (req, res) => {
+  try {
+    const userId = req.session.user.id
+    const result = await query.getCardsByUserId(userId)
+    res.json(result)
+  }
+  catch (err) {
+    console.error(err)
+    res.status(500).send('Internal Server Error')
+  }
+})
 
 app.get('/problems', async (req, res) => {
   try {

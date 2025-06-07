@@ -1,5 +1,4 @@
 import { Pool } from 'pg'
-import { resourceLimits } from 'worker_threads';
 
 const pool = new Pool({
   user: process.env.DB_USER_NAME,
@@ -18,13 +17,15 @@ export async function addUser(username, password, email) {
         console.error("Error adding user:", err);
     }
 }
-export function getUserByUsername(username) {
-  return pool.query('SELECT * FROM user_data WHERE username = $1', [username])
-    .then(result => result.rows[0])
-    .catch(err => {
-      console.error("Error fetching user:", err);
-      throw err;
-    });
+
+export async function getUserByUsername(username) {
+  try {
+    const result = await pool.query('SELECT * FROM user_data WHERE username = $1', [username]);
+    return result.rows[0];
+  } catch (err) {
+    console.error("Error fetching user:", err);
+    throw err;
+  }
 }
 
 export async function getAllUsers() {
@@ -42,9 +43,18 @@ async function getPublicProblems() {
         return result.rows;
     } catch (err) {
         console.error("Error fetching public problems:", err);
-        throw err;
     }
 }
+
+export async function getCardsByUserId(userId) {
+  try {
+    const result = await pool.query('SELECT * FROM card WHERE user_id = $1', [userId]);
+    return result.rows;
+  } catch (err) {
+    console.error("Error fetching problems by user ID:", err);
+  }
+}
+
 function getProblemById(problemId) {
   return pool.query('SELECT * FROM problem WHERE id = $1', [problemId])
     .then(result => result.rows[0])
