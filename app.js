@@ -22,26 +22,31 @@ const limiter = rateLimit({
 // Apply the rate limiting middleware to all requests.
 app.use(limiter)
 
+const allowedOrigin = 'http://localhost:5500' // testing
+// const allowedOrigin = 'http://localhost:5500' // add real domain name here
+
+app.use(cors({credentials: true, origin: allowedOrigin}))
 
 app.use(session({
   secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: true,
-  // httpOnly: false, // Helps prevent XSS attacks
+  saveUninitialized: false,
   cookie: {
-    secure: false, // Set to true if using HTTPS
+    secure: true, // Set to true if using HTTPS
+    httpOnly: true,
+    sameSite: 'none',
     maxAge: 1000 * 60 * 60 // 1 hour
   }
 }))
 
 function isAuthenticated(req, res, next) {
+  console.log("checking authentication for request:", req.method, req.url, req.session);
   if (req.session.user) {
+    console.log("got user");
     return next()
   }
   res.status(401).send('Unauthorized')
 }
-
-app.use(cors())
 
 app.get('/', async (req, res) => {
   try {
@@ -72,6 +77,10 @@ app.post('/signup', async (req, res) => {
     const existingUser = await query.getUserByUsername(username)
 
     if (existingUser) return res.status(409).send('Username already exists')
+
+    const existingEmail = await query.getUserByEmail(email)
+
+    if (existingEmail) return res.status(409).send('Email already exists')
 
     const result = await query.addUser(username, password, email)
 
@@ -107,7 +116,10 @@ app.post('/login', async (req, res) => {
       id: user.id,
       username: user.username,
     }
+
     req.session.save()
+
+    console.log("logged in", req.session)
 
     res.status(200).json({ message: 'Login successful' })
   }
@@ -132,7 +144,8 @@ app.get('/user/problems', isAuthenticated, async (req, res) => {
   try {
     const userId = req.session.user.id
     const result = await query.getCardsByUserId(userId)
-    res.json(result)
+    console.log(result)
+    res.status(200).json(result)
   }
   catch (err) {
     console.error(err)
@@ -153,5 +166,5 @@ app.get('/problems', async (req, res) => {
 )
 
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
+  console.log(`Server listening on port ${port}`)
 })
